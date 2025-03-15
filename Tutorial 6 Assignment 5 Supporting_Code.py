@@ -39,26 +39,37 @@ target_update_freq = 20
 class DQN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(DQN, self).__init__()
-        # Sanya TODO: Define the neural network layers
-        pass
-
+        # Define the neural network layers
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 16),  # Input layer
+            nn.ReLU(),                 # Activation function
+            nn.Linear(16, output_dim)  # Output layer
+)
     def forward(self, x):
-        # Sanya TODO: Define forward propagation
-        pass
+        # Define forward propagation
+        return self.model(x)
 
 # Initialize Neural Networks and optimizer for DQN
-# Sanya TODO: Complete network initialization and optimizer setup
+dqn = DQN(n_channels, n_channels)
+target_dqn = DQN(n_channels, n_channels)
+
+
+target_dqn.load_state_dict(dqn.state_dict())
+
+
+# Complete network initialization and optimizer setup
+optimizer = optim.Adam(dqn.parameters(), lr=alpha_dqn)
+criterion = nn.MSELoss()
 
 # Experience Replay Memory for DQN
-# Sanya TODO: Define the replay memory
+replay_memory = deque(maxlen=memory_size)
 
 # Lists to store rewards
 rewards_qlearning = []
 rewards_dqn = []
 
-# Training Loop
+# Q-Learning Training Loop
 for episode in range(n_episodes):
-    # Q-Learning (QN)
     # Action selection (epsilon-greedy) for Q-Learning
     random_float = random.uniform(0, 1) # a number in range [0,1)
     chosen_channel = 0 # Default channel is 0
@@ -78,7 +89,13 @@ for episode in range(n_episodes):
     reward = 0
     if (random_float2 <= true_probs[chosen_channel]):
         reward = 1
-    print("Reward on channel", chosen_channel, "is", reward, "for episode #", episode) # Debug
+        
+    # Decay epsilon
+    epsilon = epsilon * epsilon_decay
+    
+    # Ensure epsilon doesn't go below the min (want to retain a small amount of randomness)
+    if epsilon < epsilon_min:
+        epsilon = epsilon_min    
     
     # Update Q-table
     Q_table[chosen_channel] = Q_table[chosen_channel] + alpha * (reward - Q_table[chosen_channel])
@@ -86,50 +103,91 @@ for episode in range(n_episodes):
     # Append reward to rewards_qlearning
     rewards_qlearning.append(reward)
 
-    # DQN
-    # Sanya TODO: Implement action selection (epsilon-greedy) for DQN
-    # Sanya TODO: Store experiences in replay memory
+# Reset epsilon for DQN
+epsilon = 1.0
+    
+# DQN Training Loop
+for episode in range(n_episodes):
+    # Generate a random initial state (one-hot encoded)
+    state = np.eye(n_channels)[np.random.choice(n_channels)]
+    state_tensor = torch.FloatTensor(state)
 
-    # DQN training using replay memory
-    # if len(memory) >= batch_size:
-        # Sanya TODO: Sample a batch from replay memory
-        # Sanya TODO: Compute Q-values and target Q-values
-        # Sanya TODO: Compute loss and update DQN
-        # pass
+    # Action selection (epsilon-greedy)
+    if np.random.rand() < epsilon:
+        action = np.random.choice(n_channels)  # Explore
+    else:
+        with torch.no_grad():
+            q_values = dqn(state_tensor)
+            action = torch.argmax(q_values).item()  # Exploit
 
-    # Sanya TODO: Update target network periodically (based on target_update_freq)
+    # Calculate reward
+    reward = 1 if np.random.rand() < true_probs[action] else 0
+
+    # Generate the next state (one-hot encoded)
+    next_state = np.eye(n_channels)[np.random.choice(n_channels)]
+    next_state_tensor = torch.FloatTensor(next_state)
+
+    # Store experience in replay memory
+    replay_memory.append((state, action, reward, next_state))
+
+    # Train DQN using replay memory
+    if len(replay_memory) >= batch_size:
+        # Sample a batch from replay memory
+        batch = random.sample(replay_memory, batch_size)
+        states, actions, rewards, next_states = zip(*batch)
+
+        # Convert to tensors
+        states = torch.FloatTensor(states)
+        actions = torch.LongTensor(actions).unsqueeze(1)
+        rewards = torch.FloatTensor(rewards)
+        next_states = torch.FloatTensor(next_states)
+
+        # Compute Q-values and target Q-values
+        current_q_values = dqn(states).gather(1, actions)
+        with torch.no_grad():
+            next_q_values = target_dqn(next_states).max(1)[0]
+            target_q_values = rewards + gamma * next_q_values
+
+        # Compute loss and update DQN
+        loss = criterion(current_q_values.squeeze(), target_q_values)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    # Update target network periodically
+    if episode % target_update_freq == 0:
+        target_dqn.load_state_dict(dqn.state_dict())
 
     # Decay epsilon
     epsilon = epsilon * epsilon_decay
-    
+
     # Ensure epsilon doesn't go below the min (want to retain a small amount of randomness)
     if epsilon < epsilon_min:
         epsilon = epsilon_min
 
-    # Sanya TODO: Append reward to rewards_dqn
+    # Append reward to rewards_dqn
+    rewards_dqn.append(reward)
     # Currently just adding a number between 0-1 so I can make a graph
-    rand_int2 = random.randint(0, 1)
-    rewards_dqn.append(rand_int2)
     
-    
+       
 print("After ", n_episodes, " the Qtable has generated the probabilities: ", Q_table) # Debug
 
-# Moving Average Calculation
-# Sanya TODO: Complete the moving average function
-def moving_average(data, window_size):
-    pass
 
-# Plot Learning Curve for Q-Learning vs. DQN
-# Compute cumulative win rates
-q_learning_cumulative = np.cumsum(rewards_qlearning) / (np.arange(n_episodes) + 1)
-random_cumulative = np.cumsum(rewards_dqn) / (np.arange(n_episodes) + 1)
+# Moving Average Calculation
+def moving_average(data, window_size):
+    return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+
+# Compute moving averages
+window_size = 1000
+q_learning_ma = moving_average(rewards_qlearning, window_size)
+dqn_ma = moving_average(rewards_dqn, window_size)
 
 # Plot results
 plt.figure(figsize=(10, 5))
-plt.plot(q_learning_cumulative, label="Q-learning", linewidth=2)
-plt.plot(random_cumulative, label="Deep Q-Network", linestyle="dashed", linewidth=2)
+plt.plot(q_learning_ma, label="Q-learning", linewidth=2)
+plt.plot(dqn_ma, label="Deep Q-Network", linestyle="dashed", linewidth=2)
 plt.xlabel("Episodes")
-plt.ylabel("Cumulative Win Rate")
+plt.ylabel("Moving Average Reward")
 plt.title("Performance of Q-learning vs Deep Q-Network")
 plt.legend()
 plt.grid(True)
