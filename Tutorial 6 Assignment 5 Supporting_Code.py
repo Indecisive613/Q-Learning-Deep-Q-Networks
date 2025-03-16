@@ -15,9 +15,15 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(SEED)
 
 # Environment Setup
-n_channels = 5
+n_channels = 5 # Number of channels
 n_episodes = 10000
-true_probs = [0.1, 0.4, 0.6, 0.3, 0.9]
+
+# Scenario 1
+# true_probs = [0.1, 0.4, 0.6, 0.3, 0.9]
+# Scenario 2
+true_probs = [0.5, 0.9, 0.8, 0.6]
+# Scenario 3
+# true_probs = [0.9, 0.2, 0.5, 0.3, 0.8]
 
 # Q-Learning Parameters
 alpha = 0.1
@@ -83,29 +89,30 @@ for episode in range(n_episodes):
             if (Q_table[i] > current_biggest):
                 current_biggest = Q_table[i]
                 chosen_channel = i
-    
+
     # Calculate the reward on the chosen channel
     random_float2 = random.uniform(0, 1) # a number in range [0,1)
     reward = 0
     if (random_float2 <= true_probs[chosen_channel]):
         reward = 1
-        
+
     # Decay epsilon
     epsilon = epsilon * epsilon_decay
-    
+
     # Ensure epsilon doesn't go below the min (want to retain a small amount of randomness)
     if epsilon < epsilon_min:
-        epsilon = epsilon_min    
-    
+        epsilon = epsilon_min
+
     # Update Q-table
     Q_table[chosen_channel] = Q_table[chosen_channel] + alpha * (reward - Q_table[chosen_channel])
-   
+
     # Append reward to rewards_qlearning
     rewards_qlearning.append(reward)
 
 # Reset epsilon for DQN
 epsilon = 1.0
-    
+
+
 # DQN Training Loop
 for episode in range(n_episodes):
     # Generate a random initial state (one-hot encoded)
@@ -117,42 +124,21 @@ for episode in range(n_episodes):
         action = np.random.choice(n_channels)  # Explore
     else:
         with torch.no_grad():
-            q_values = dqn(state_tensor)
-            action = torch.argmax(q_values).item()  # Exploit
+            action = torch.argmax(dqn(state_tensor)).item()  # Exploit
 
     # Calculate reward
     reward = 1 if np.random.rand() < true_probs[action] else 0
 
-    # Generate the next state (one-hot encoded)
-    next_state = np.eye(n_channels)[np.random.choice(n_channels)]
-    next_state_tensor = torch.FloatTensor(next_state)
+    # Update the target Q-values
+    target = dqn(state_tensor).clone().detach()
+    target[action] = reward
 
-    # Store experience in replay memory
-    replay_memory.append((state, action, reward, next_state))
-
-    # Train DQN using replay memory
-    if len(replay_memory) >= batch_size:
-        # Sample a batch from replay memory
-        batch = random.sample(replay_memory, batch_size)
-        states, actions, rewards, next_states = zip(*batch)
-
-        # Convert to tensors
-        states = torch.FloatTensor(states)
-        actions = torch.LongTensor(actions).unsqueeze(1)
-        rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(next_states)
-
-        # Compute Q-values and target Q-values
-        current_q_values = dqn(states).gather(1, actions)
-        with torch.no_grad():
-            next_q_values = target_dqn(next_states).max(1)[0]
-            target_q_values = rewards + gamma * next_q_values
-
-        # Compute loss and update DQN
-        loss = criterion(current_q_values.squeeze(), target_q_values)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # Compute the loss and update the model
+    output = dqn(state_tensor)
+    loss = criterion(output, target)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
     # Update target network periodically
     if episode % target_update_freq == 0:
@@ -167,11 +153,31 @@ for episode in range(n_episodes):
 
     # Append reward to rewards_dqn
     rewards_dqn.append(reward)
-    # Currently just adding a number between 0-1 so I can make a graph
-    
-       
-print("After ", n_episodes, " the Qtable has generated the probabilities: ", Q_table) # Debug
 
+
+print("After ", n_episodes, " the Q table has generated the probabilities: ", Q_table) # Debug
+
+# Select a specific state (e.g., state 2)
+state_index = 0 #choosen state
+state = np.eye(n_channels)[state_index]  # One-hot encode the state
+state_tensor = torch.FloatTensor(state)  # Convert to a PyTorch tensor
+
+# Get Q-values for the selected state
+with torch.no_grad():  # Ensure no gradients are computed
+    q_values_for_state = dqn(state_tensor)
+
+# Print the Q-values
+print("After ", n_episodes, " the Deep Qtable has generated the probabilities: ",q_values_for_state.numpy())
+
+""" To get values of all the states together use the code below
+with torch.no_grad():
+    print("\nLearned Q-values:")
+    q_values = dqn(torch.eye(n_channels))  # Pass all states through the model
+    print(q_values.numpy())  # Print Q-values
+
+print("After ", n_episodes, " the Deep Qtable has generated the probabilities: ", Q_table) # Debug
+
+"""
 
 # Moving Average Calculation
 def moving_average(data, window_size):
